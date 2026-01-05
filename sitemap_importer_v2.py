@@ -66,10 +66,10 @@ class BurpExtender(IBurpExtender, ITab):
         hostPanel = JPanel(FlowLayout(FlowLayout.LEFT))
         hostPanel.setBorder(BorderFactory.createTitledBorder("Host Replacement (URL + Headers)"))
         hostPanel.add(JLabel("Find:"))
-        self.oldHostField = JTextField("yahoo.com", 20)
+        self.oldHostField = JTextField("yourgpt.ai", 20)
         hostPanel.add(self.oldHostField)
         hostPanel.add(JLabel("  Replace:"))
-        self.newHostField = JTextField("google.com", 20)
+        self.newHostField = JTextField("d4ai.chat", 20)
         hostPanel.add(self.newHostField)
         addHostPreset = JButton("Add Rule", actionPerformed=self.onAddHostPreset)
         hostPanel.add(addHostPreset)
@@ -270,11 +270,11 @@ class BurpExtender(IBurpExtender, ITab):
         
         panel.add(topPanel, BorderLayout.NORTH)
         
-        # Preview panel - side by side
+        # Preview panel - side by side using Burp's native message editors
         previewPanel = JPanel(BorderLayout())
         previewPanel.setBorder(BorderFactory.createTitledBorder("Preview: Original vs Modified"))
         
-        # Navigation
+        # Navigation + URL
         navPanel = JPanel(FlowLayout(FlowLayout.CENTER))
         self.prevBtn = JButton("<< Previous", actionPerformed=self.onPrevPreview)
         self.previewIndexLabel = JLabel("Request 0 / 0")
@@ -282,33 +282,43 @@ class BurpExtender(IBurpExtender, ITab):
         navPanel.add(self.prevBtn)
         navPanel.add(self.previewIndexLabel)
         navPanel.add(self.nextBtn)
-        previewPanel.add(navPanel, BorderLayout.NORTH)
         
-        # Side by side text areas
+        # URL display row
+        urlPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        urlPanel.add(JLabel("URL: "))
+        self.urlDisplayLabel = JLabel("(select a file to preview)")
+        urlPanel.add(self.urlDisplayLabel)
+        
+        topNavPanel = JPanel(BorderLayout())
+        topNavPanel.add(navPanel, BorderLayout.NORTH)
+        topNavPanel.add(urlPanel, BorderLayout.SOUTH)
+        previewPanel.add(topNavPanel, BorderLayout.NORTH)
+        
+        # Side by side Burp message editors
         splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
         splitPane.setResizeWeight(0.5)
         
-        # Original panel
+        # Original panel with Burp's native message editor
         originalPanel = JPanel(BorderLayout())
-        originalLabel = JLabel("ORIGINAL", SwingConstants.CENTER)
+        originalLabel = JLabel("ORIGINAL REQUEST", SwingConstants.CENTER)
         originalLabel.setFont(Font("Arial", Font.BOLD, 12))
         originalLabel.setForeground(Color(150, 0, 0))
         originalPanel.add(originalLabel, BorderLayout.NORTH)
-        self.originalArea = JTextArea(20, 50)
-        self.originalArea.setEditable(False)
-        self.originalArea.setFont(Font("Monospaced", Font.PLAIN, 11))
-        originalPanel.add(JScrollPane(self.originalArea), BorderLayout.CENTER)
         
-        # Modified panel
+        # Create Burp's native message editor for original request
+        self.originalRequestViewer = self.callbacks.createMessageEditor(None, False)
+        originalPanel.add(self.originalRequestViewer.getComponent(), BorderLayout.CENTER)
+        
+        # Modified panel with Burp's native message editor
         modifiedPanel = JPanel(BorderLayout())
-        modifiedLabel = JLabel("MODIFIED (After Rules Applied)", SwingConstants.CENTER)
+        modifiedLabel = JLabel("MODIFIED REQUEST (After Rules)", SwingConstants.CENTER)
         modifiedLabel.setFont(Font("Arial", Font.BOLD, 12))
         modifiedLabel.setForeground(Color(0, 120, 0))
         modifiedPanel.add(modifiedLabel, BorderLayout.NORTH)
-        self.modifiedArea = JTextArea(20, 50)
-        self.modifiedArea.setEditable(False)
-        self.modifiedArea.setFont(Font("Monospaced", Font.PLAIN, 11))
-        modifiedPanel.add(JScrollPane(self.modifiedArea), BorderLayout.CENTER)
+        
+        # Create Burp's native message editor for modified request
+        self.modifiedRequestViewer = self.callbacks.createMessageEditor(None, False)
+        modifiedPanel.add(self.modifiedRequestViewer.getComponent(), BorderLayout.CENTER)
         
         splitPane.setLeftComponent(originalPanel)
         splitPane.setRightComponent(modifiedPanel)
@@ -320,7 +330,7 @@ class BurpExtender(IBurpExtender, ITab):
         # Log panel
         logPanel = JPanel(BorderLayout())
         logPanel.setBorder(BorderFactory.createTitledBorder("Log"))
-        self.logArea = JTextArea(5, 80)
+        self.logArea = JTextArea(4, 80)
         self.logArea.setEditable(False)
         logPanel.add(JScrollPane(self.logArea), BorderLayout.CENTER)
         panel.add(logPanel, BorderLayout.SOUTH)
@@ -511,9 +521,10 @@ class BurpExtender(IBurpExtender, ITab):
 
     def updatePreview(self):
         if not self.loadedItems:
-            self.originalArea.setText("No items loaded")
-            self.modifiedArea.setText("No items loaded")
+            self.originalRequestViewer.setMessage("", False)
+            self.modifiedRequestViewer.setMessage("", False)
             self.previewIndexLabel.setText("Request 0 / 0")
+            self.urlDisplayLabel.setText("(select a file to preview)")
             return
         
         total = len(self.loadedItems)
@@ -525,29 +536,38 @@ class BurpExtender(IBurpExtender, ITab):
         url = item[0]
         request_b64 = item[1]
         
-        # Decode original using Java String
-        try:
-            from java.lang import String as JString
-            request_bytes = Base64.getDecoder().decode(request_b64)
-            original_text = JString(request_bytes, "ISO-8859-1").toString()
-        except:
-            original_text = "(decode error)"
+        # Update URL display
+        self.urlDisplayLabel.setText(url)
         
-        # Show original
-        originalDisplay = "URL: {}\n{}\n{}".format(url, "=" * 60, original_text)
-        self.originalArea.setText(originalDisplay)
-        self.originalArea.setCaretPosition(0)
+        # Decode original request
+        try:
+            original_bytes = Base64.getDecoder().decode(request_b64)
+        except:
+            original_bytes = None
+        
+        # Show original in Burp's message editor
+        if original_bytes:
+            self.originalRequestViewer.setMessage(original_bytes, True)
+        else:
+            self.originalRequestViewer.setMessage("(decode error)", False)
         
         # Apply rules and show modified
         if self.applyRulesCheckBox.isSelected() and self.replacementRules:
-            modified_url = self.applyReplacements(url)
-            modified_text = self.applyReplacements(original_text)
-            modifiedDisplay = "URL: {}\n{}\n{}".format(modified_url, "=" * 60, modified_text)
+            try:
+                from java.lang import String as JString
+                original_text = JString(original_bytes, "ISO-8859-1").toString()
+                modified_text = self.applyReplacements(original_text)
+                # Convert back to bytes for Burp editor
+                modified_bytes = JString(modified_text).getBytes("ISO-8859-1")
+                self.modifiedRequestViewer.setMessage(modified_bytes, True)
+            except Exception as e:
+                self.modifiedRequestViewer.setMessage("(error applying rules)", False)
         else:
-            modifiedDisplay = "(No rules applied - same as original)"
-        
-        self.modifiedArea.setText(modifiedDisplay)
-        self.modifiedArea.setCaretPosition(0)
+            # No rules - show same as original
+            if original_bytes:
+                self.modifiedRequestViewer.setMessage(original_bytes, True)
+            else:
+                self.modifiedRequestViewer.setMessage("(no rules applied)", False)
 
     def onPrevPreview(self, event):
         if self.loadedItems and self.currentPreviewIndex > 0:
